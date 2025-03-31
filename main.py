@@ -24,15 +24,66 @@ class CacheSimulator:
         self.misses = 0
 
     def access_memory(self, address):
-        if address in self.cache:
-            self.hits += 1
-            if self.replacement_policy == 'LRU':
-                self.cache.move_to_end(address) #Move to end to mark as recently used
-        else:
-            self.misses += 1
-            if len(self.cache) >= self.cache_size:
-                self.cache.popitem(last=False) #Remove the first item (oldest)
-            self.cache[address] = True
+        # Calculate block address
+        block_address = address // self.block_size
+        
+        # Handle different associativity types
+        if self.associativity == 'Direct':
+            # Direct mapping: one fixed location for each block
+            cache_line = block_address % self.cache_size
+            if cache_line in self.cache and self.cache[cache_line]['block'] == block_address:
+                self.hits += 1
+                if self.replacement_policy == 'LRU':
+                    self.cache.move_to_end(cache_line)
+            else:
+                self.misses += 1
+                if len(self.cache) >= self.cache_size:
+                    self.cache.popitem(last=False)
+                self.cache[cache_line] = {'block': block_address, 'data': True}
+                
+        elif self.associativity == 'Set-Associative':
+            # Set-associative: multiple blocks per set
+            set_size = 2  # 2-way set associative
+            set_index = block_address % (self.cache_size // set_size)
+            set_found = False
+            
+            # Check if block exists in the set
+            for cache_line in list(self.cache.keys()):
+                if cache_line // (self.cache_size // set_size) == set_index:
+                    if self.cache[cache_line]['block'] == block_address:
+                        self.hits += 1
+                        if self.replacement_policy == 'LRU':
+                            self.cache.move_to_end(cache_line)
+                        set_found = True
+                        break
+            
+            if not set_found:
+                self.misses += 1
+                # Find or create space in the set
+                set_lines = [line for line in self.cache.keys() 
+                           if line // (self.cache_size // set_size) == set_index]
+                if len(set_lines) >= set_size:
+                    self.cache.pop(set_lines[0])
+                new_line = set_index * set_size + (len(set_lines) % set_size)
+                self.cache[new_line] = {'block': block_address, 'data': True}
+                
+        else:  # Fully-Associative
+            # Can place block anywhere in cache
+            block_found = False
+            for cache_line, entry in self.cache.items():
+                if entry['block'] == block_address:
+                    self.hits += 1
+                    if self.replacement_policy == 'LRU':
+                        self.cache.move_to_end(cache_line)
+                    block_found = True
+                    break
+                    
+            if not block_found:
+                self.misses += 1
+                if len(self.cache) >= self.cache_size:
+                    self.cache.popitem(last=False)
+                # Use the block address as the cache line for simplicity
+                self.cache[len(self.cache)] = {'block': block_address, 'data': True}
 
     def get_hit_rate(self):
         total = self.hits + self.misses
@@ -377,13 +428,30 @@ class CacheSimulatorGUI:
             self.associativity_var.set(recommendation['associativity'])
             self.policy_var.set(recommendation['replacement_policy'])
             
-            # Show success message with details
-            message = f"AI Recommendation Applied:\n\n" \
-                     f"Cache Size: {recommendation['cache_size']}\n" \
-                     f"Block Size: {recommendation['block_size']}\n" \
-                     f"Associativity: {recommendation['associativity']}\n" \
-                     f"Replacement Policy: {recommendation['replacement_policy']}\n\n" \
-                     f"Would you like to run the simulation with these settings?"
+            # Show success message with details and explanations
+            message = f"AI Recommendation Applied:\n\n"
+            
+            # Add each parameter with its explanation
+            if 'explanations' in recommendation:
+                message += f"Cache Size: {recommendation['cache_size']}\n"
+                message += f"→ Why? {recommendation['explanations'].get('cache_size', '')}\n\n"
+                
+                message += f"Block Size: {recommendation['block_size']}\n"
+                message += f"→ Why? {recommendation['explanations'].get('block_size', '')}\n\n"
+                
+                message += f"Associativity: {recommendation['associativity']}\n"
+                message += f"→ Why? {recommendation['explanations'].get('associativity', '')}\n\n"
+                
+                message += f"Replacement Policy: {recommendation['replacement_policy']}\n"
+                message += f"→ Why? {recommendation['explanations'].get('replacement_policy', '')}\n\n"
+            else:
+                # Fallback to original format if no explanations
+                message += f"Cache Size: {recommendation['cache_size']}\n" \
+                          f"Block Size: {recommendation['block_size']}\n" \
+                          f"Associativity: {recommendation['associativity']}\n" \
+                          f"Replacement Policy: {recommendation['replacement_policy']}\n\n"
+            
+            message += "Would you like to run the simulation with these settings?"
             
             if messagebox.askyesno('AI Recommendation', message):
                 self.start_simulation()
